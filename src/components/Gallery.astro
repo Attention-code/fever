@@ -201,6 +201,15 @@
   const halfCount = items.length / 2;
   const halfWidth = halfCount * itemWidth;
 
+  // 移动端修复：补间引用保存 + rAF 节流 + autoScroll 守卫，桌面端逻辑不变
+  const isMobile = window.innerWidth < 768;
+
+  // 移动端专用状态（桌面端不使用）
+  let inertiaTween: gsap.core.Tween | null = null;
+  let isInertiaAnimating = false;
+  let pendingX: number | null = null;
+  let rafId: number | null = null;
+
   let isDragging = false;
   let startX = 0;
   let scrollLeft = 0;
@@ -235,7 +244,7 @@
       // 惯性效果
       const velocity = lastDx;
       if (Math.abs(velocity) > 2) {
-        gsap.to({ x: currentX }, {
+        const tween = gsap.to({ x: currentX }, {
           x: currentX + velocity * 15,
           duration: 1.2,
           ease: 'power3.out',
@@ -244,12 +253,24 @@
             applyPosition();
           }
         });
+        // 移动端保存补间引用 + onComplete（桌面端不执行，行为与原代码一致）
+        if (isMobile) {
+          inertiaTween = tween;
+          isInertiaAnimating = true;
+          tween.eventCallback('onComplete', () => { isInertiaAnimating = false; inertiaTween = null; });
+        }
       }
     }
   });
 
   // 触摸拖拽
   container.addEventListener('touchstart', (e) => {
+    // 移动端：kill 旧惯性补间，防止多个补间并发写入 currentX
+    if (isMobile && inertiaTween) {
+      inertiaTween.kill();
+      inertiaTween = null;
+      isInertiaAnimating = false;
+    }
     isDragging = true;
     startX = e.touches[0].pageX;
     scrollLeft = currentX;
@@ -261,7 +282,21 @@
     const dx = e.touches[0].pageX - startX;
     lastDx = dx - (currentX - scrollLeft);
     currentX = scrollLeft + dx;
-    applyPosition();
+    // 移动端用 rAF 节流（每帧最多一次 applyPosition），桌面端直接调用
+    if (isMobile) {
+      pendingX = currentX;
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          if (pendingX !== null) {
+            currentX = pendingX;
+            applyPosition();
+          }
+          rafId = null;
+        });
+      }
+    } else {
+      applyPosition();
+    }
   }, { passive: true });
 
   container.addEventListener('touchend', () => {
@@ -269,7 +304,7 @@
     // 触摸惯性
     const velocity = lastDx;
     if (Math.abs(velocity) > 2) {
-      gsap.to({ x: currentX }, {
+      const tween = gsap.to({ x: currentX }, {
         x: currentX + velocity * 10,
         duration: 0.8,
         ease: 'power3.out',
@@ -278,6 +313,15 @@
           applyPosition();
         }
       });
+      // 移动端保存补间引用 + onComplete 清理状态
+      if (isMobile) {
+        inertiaTween = tween;
+        isInertiaAnimating = true;
+        tween.eventCallback('onComplete', () => {
+          isInertiaAnimating = false;
+          inertiaTween = null;
+        });
+      }
     }
   });
 
@@ -299,7 +343,9 @@
 
   function startAutoScroll() {
     autoScroll = setInterval(() => {
-      if (!isDragging) {
+      // 移动端：惯性动画期间暂停 autoScroll，防止并发写入 currentX
+      // 桌面端：isMobile=false 时守卫恒为 true，条件退化为 !isDragging（与原代码一致）
+      if (!isDragging && !(isMobile && isInertiaAnimating)) {
         currentX -= 0.5;
         applyPosition();
       }

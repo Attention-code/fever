@@ -85,14 +85,24 @@
 
 <script>
   // ===== 生成蜂窝矩阵 =====
+  // 移动端适配：仅在 <768px 视口下调整 viewBox 与行列数，桌面端保持原值
   const svg = document.getElementById('hex-grid')!;
   const ns = 'http://www.w3.org/2000/svg';
 
-  const hexSize = 30;
+  const isMobile = window.innerWidth < 768;
+  const VIEW_W = isMobile ? 400 : 800;
+  const VIEW_H = isMobile ? 700 : 600;
+  const hexSize = isMobile ? 22 : 30;
+
+  // 移动端覆盖 viewBox（4:3 → 9:16 适配竖屏，slice 缩放比 ≈0.95 不裁剪）
+  if (isMobile) {
+    svg.setAttribute('viewBox', `0 0 ${VIEW_W} ${VIEW_H}`);
+  }
+
   const hexW = hexSize * 2;
   const hexH = Math.sqrt(3) * hexSize;
-  const cols = Math.ceil(800 / (hexW * 0.75)) + 1;
-  const rows = Math.ceil(600 / hexH) + 1;
+  const cols = Math.ceil(VIEW_W / (hexW * 0.75)) + 1;
+  const rows = Math.ceil(VIEW_H / hexH) + 1;
 
   const hexagons: SVGPolygonElement[] = [];
   for (let row = 0; row < rows; row++) {
@@ -119,7 +129,7 @@
   });
 
   // 阶段2：中心扩散消失
-  const centerX = 400, centerY = 300;
+  const centerX = VIEW_W / 2, centerY = VIEW_H / 2;
   const byDistance = [...hexagons].sort((a, b) => {
     const getCenter = (el: SVGPolygonElement) => {
       const pts = el.getAttribute('points')!.split(' ')[0].split(',');

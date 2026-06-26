@@ -19,7 +19,7 @@
         <!-- 六边形框架 -->
         <path d="M70 6L128 38V102L70 134L12 102V38L70 6Z" stroke="var(--color-neon-green)" stroke-width="1" class="stroke-draw" style="--len:400"/>
         <!-- 圆形队徽图片(已预处理好，带绿色描边) + drop-shadow发光 -->
-        <image href="/images/logo-hero.png" x="14" y="14" width="112" height="112" preserveAspectRatio="xMidYMid meet" style="filter: drop-shadow(0 0 20px rgba(0,255,157,0.5))"/>
+        <image href={import.meta.env.BASE_URL + "images/logo-hero.png"} x="14" y="14" width="112" height="112" preserveAspectRatio="xMidYMid meet" style="filter: drop-shadow(0 0 20px rgba(0,255,157,0.5))"/>
         <!-- 六个顶点装饰 - 错峰脉冲 -->
         <circle cx="70" cy="6" r="2" fill="var(--color-neon-green)" opacity="0.7" class="animate-pulse" style="animation-delay:0s"/>
         <circle cx="128" cy="38" r="2" fill="var(--color-neon-green)" opacity="0.7" class="animate-pulse" style="animation-delay:0.3s"/>
