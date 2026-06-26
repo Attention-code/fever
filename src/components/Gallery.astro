@@ -197,168 +197,149 @@
   const container = document.getElementById('infinite-gallery')!;
   const inner = document.getElementById('gallery-inner')!;
   const items = inner.querySelectorAll('.gallery-item');
-  const itemWidth = (items[0] as HTMLElement).offsetWidth + 20; // width + margin
+  const itemWidth = (items[0] as HTMLElement).offsetWidth + 20;
   const halfCount = items.length / 2;
   const halfWidth = halfCount * itemWidth;
 
-  // 移动端修复：补间引用保存 + rAF 节流 + autoScroll 守卫，桌面端逻辑不变
-  const isMobile = window.innerWidth < 768;
-
-  // 移动端专用状态（桌面端不使用）
-  let inertiaTween: gsap.core.Tween | null = null;
-  let isInertiaAnimating = false;
-  let pendingX: number | null = null;
-  let rafId: number | null = null;
-
-  let isDragging = false;
-  let startX = 0;
-  let scrollLeft = 0;
+  // ========== 状态 ==========
   let currentX = 0;
+  let isDragging = false;
+  let dragStartPointerX = 0;   // 拖拽起始指针位置
+  let dragStartCurrentX = 0;   // 拖拽起始时的 currentX
   let lastDx = 0;
+  let velocity = 0;
   let lastMoveTime = 0;
+  let lastMovePointerX = 0;
 
-  // 鼠标拖拽
-  container.addEventListener('mousedown', (e) => {
-    isDragging = true;
-    startX = e.pageX;
-    scrollLeft = currentX;
-    lastDx = 0;
-    lastMoveTime = Date.now();
-    container.style.cursor = 'grabbing';
-  });
+  // 惯性补间引用（统一管理，mouse/touch 共用）
+  let activeTween: gsap.core.Tween | null = null;
 
-  container.addEventListener('mousemove', (e) => {
-    if (!isDragging) return;
-    e.preventDefault();
-    const dx = e.pageX - startX;
-    lastDx = dx - (currentX - scrollLeft);
-    lastMoveTime = Date.now();
-    currentX = scrollLeft + dx;
-    applyPosition();
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (isDragging) {
-      isDragging = false;
-      container.style.cursor = 'grab';
-      // 惯性效果
-      const velocity = lastDx;
-      if (Math.abs(velocity) > 2) {
-        const tween = gsap.to({ x: currentX }, {
-          x: currentX + velocity * 15,
-          duration: 1.2,
-          ease: 'power3.out',
-          onUpdate: function() {
-            currentX = this.targets()[0].x;
-            applyPosition();
-          }
-        });
-        // 移动端保存补间引用 + onComplete（桌面端不执行，行为与原代码一致）
-        if (isMobile) {
-          inertiaTween = tween;
-          isInertiaAnimating = true;
-          tween.eventCallback('onComplete', () => { isInertiaAnimating = false; inertiaTween = null; });
-        }
-      }
-    }
-  });
-
-  // 触摸拖拽
-  container.addEventListener('touchstart', (e) => {
-    // 移动端：kill 旧惯性补间，防止多个补间并发写入 currentX
-    if (isMobile && inertiaTween) {
-      inertiaTween.kill();
-      inertiaTween = null;
-      isInertiaAnimating = false;
-    }
-    isDragging = true;
-    startX = e.touches[0].pageX;
-    scrollLeft = currentX;
-    lastDx = 0;
-  }, { passive: true });
-
-  container.addEventListener('touchmove', (e) => {
-    if (!isDragging) return;
-    const dx = e.touches[0].pageX - startX;
-    lastDx = dx - (currentX - scrollLeft);
-    currentX = scrollLeft + dx;
-    // 移动端用 rAF 节流（每帧最多一次 applyPosition），桌面端直接调用
-    if (isMobile) {
-      pendingX = currentX;
-      if (rafId === null) {
-        rafId = requestAnimationFrame(() => {
-          if (pendingX !== null) {
-            currentX = pendingX;
-            applyPosition();
-          }
-          rafId = null;
-        });
-      }
-    } else {
-      applyPosition();
-    }
-  }, { passive: true });
-
-  container.addEventListener('touchend', () => {
-    isDragging = false;
-    // 触摸惯性
-    const velocity = lastDx;
-    if (Math.abs(velocity) > 2) {
-      const tween = gsap.to({ x: currentX }, {
-        x: currentX + velocity * 10,
-        duration: 0.8,
-        ease: 'power3.out',
-        onUpdate: function() {
-          currentX = this.targets()[0].x;
-          applyPosition();
-        }
-      });
-      // 移动端保存补间引用 + onComplete 清理状态
-      if (isMobile) {
-        inertiaTween = tween;
-        isInertiaAnimating = true;
-        tween.eventCallback('onComplete', () => {
-          isInertiaAnimating = false;
-          inertiaTween = null;
-        });
-      }
-    }
-  });
-
+  // ========== 核心：应用位置 + 边界穿越 ==========
   function applyPosition() {
-    // 无限循环：边界穿越
+    // 边界穿越（无限循环）
     if (currentX < -halfWidth) {
       currentX += halfWidth;
-      scrollLeft += halfWidth;
     }
     if (currentX > 0) {
       currentX -= halfWidth;
-      scrollLeft -= halfWidth;
     }
     gsap.set(inner, { x: currentX });
   }
 
-  // 自动缓慢漂移
+  // ========== 工具：kill 活跃补间 ==========
+  function killActiveTween() {
+    if (activeTween) {
+      activeTween.kill();
+      activeTween = null;
+    }
+  }
+
+  // ========== 工具：计算速度 ==========
+  function updateVelocity(pointerX: number, now: number) {
+    if (lastMoveTime > 0 && now - lastMoveTime < 100) {
+      velocity = pointerX - lastMovePointerX;
+    }
+    lastMovePointerX = pointerX;
+    lastMoveTime = now;
+  }
+
+  // ========== 鼠标拖拽 ==========
+  container.addEventListener('mousedown', (e) => {
+    killActiveTween();
+    isDragging = true;
+    dragStartPointerX = e.pageX;
+    dragStartCurrentX = currentX;
+    lastDx = 0;
+    lastMoveTime = 0;
+    container.style.cursor = 'grabbing';
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const dx = e.pageX - dragStartPointerX;
+    lastDx = dx;
+    currentX = dragStartCurrentX + dx;
+    updateVelocity(e.pageX, Date.now());
+    applyPosition();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!isDragging) return;
+    isDragging = false;
+    container.style.cursor = 'grab';
+    launchInertia(lastDx);
+  });
+
+  // ========== 触摸拖拽 ==========
+  container.addEventListener('touchstart', (e) => {
+    killActiveTween();
+    isDragging = true;
+    dragStartPointerX = e.touches[0].pageX;
+    dragStartCurrentX = currentX;
+    lastDx = 0;
+    lastMoveTime = 0;
+  }, { passive: true });
+
+  container.addEventListener('touchmove', (e) => {
+    if (!isDragging) return;
+    const pointerX = e.touches[0].pageX;
+    const dx = pointerX - dragStartPointerX;
+    lastDx = dx;
+    currentX = dragStartCurrentX + dx;
+    updateVelocity(pointerX, Date.now());
+    applyPosition();
+  }, { passive: true });
+
+  container.addEventListener('touchend', () => {
+    isDragging = false;
+    launchInertia(lastDx);
+  });
+
+  // ========== 惯性启动（统一入口）==========
+  function launchInertia(v: number) {
+    killActiveTween();
+    if (Math.abs(v) < 3) return;
+    const targetX = currentX + v * 12;
+    activeTween = gsap.to({ x: currentX }, {
+      x: targetX,
+      duration: 1.0,
+      ease: 'power3.out',
+      onUpdate() {
+        currentX = this.targets()[0].x;
+        applyPosition();
+      },
+      onComplete() {
+        activeTween = null;
+      }
+    });
+  }
+
+  // ========== 自动缓慢漂移 ==========
   let autoScroll: ReturnType<typeof setInterval> | null = null;
 
   function startAutoScroll() {
+    stopAutoScroll();
     autoScroll = setInterval(() => {
-      // 移动端：惯性动画期间暂停 autoScroll，防止并发写入 currentX
-      // 桌面端：isMobile=false 时守卫恒为 true，条件退化为 !isDragging（与原代码一致）
-      if (!isDragging && !(isMobile && isInertiaAnimating)) {
+      if (!isDragging && !activeTween) {
         currentX -= 0.5;
         applyPosition();
       }
     }, 16);
   }
 
+  function stopAutoScroll() {
+    if (autoScroll) {
+      clearInterval(autoScroll);
+      autoScroll = null;
+    }
+  }
+
   // 只在可视区域内自动滚动
   const galleryObserver = new IntersectionObserver(([entry]) => {
     if (entry.isIntersecting) {
       startAutoScroll();
-    } else if (autoScroll) {
-      clearInterval(autoScroll);
-      autoScroll = null;
+    } else {
+      stopAutoScroll();
     }
   }, { threshold: 0.1 });
 
